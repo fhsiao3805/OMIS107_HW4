@@ -14,7 +14,7 @@ python3 -m venv .venv
 .venv/bin/python app.py
 ```
 
-Then open <http://127.0.0.1:8000>.
+Then open <http://127.0.0.1:8001>.
 
 The first time it starts, the server reads the bulletin's department pages in the
 background. That takes about 8 minutes, and the page shows its progress. The
