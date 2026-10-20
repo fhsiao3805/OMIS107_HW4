@@ -68,6 +68,12 @@
   .band { font-size: 11px; fill: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
   .zoom { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 6px; }
   .zoom button { background: var(--panel); color: var(--ink); border-color: var(--line); padding: 4px 10px; }
+  dialog { border: 1px solid var(--line); border-top: 4px solid var(--accent); border-radius: 10px;
+           background: var(--panel); color: var(--ink); padding: 20px 22px; width: min(380px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .35); }
+  dialog h2 { font-size: 17px; margin: 0 0 8px; }
+  dialog p { margin: 0 0 16px; color: var(--muted); }
+  dialog form { justify-content: flex-end; }
   @media (max-width: 800px) {
     main { grid-template-columns: minmax(0, 1fr); height: auto; }
     input[type=text] { width: 100%; flex: 1 1 160px; }
@@ -113,6 +119,11 @@
       course is one of several ways to qualify. Click any box to map that course.</p>
   </aside>
 </main>
+<dialog id="err" aria-labelledby="err-title">
+  <h2 id="err-title">Course not found</h2>
+  <p id="err-msg"></p>
+  <form method="dialog"><button autofocus>OK</button></form>
+</dialog>
 <script>
 const $ = (id) => document.getElementById(id);
 const svg = $("svg");
@@ -144,7 +155,21 @@ $("q").addEventListener("input", () => {
   }, 150);
 });
 
-$("f").addEventListener("submit", (e) => { e.preventDefault(); load($("q").value); });
+$("f").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("q").value;
+  // clear the box so the next lookup starts fresh
+  clearTimeout(searchTimer);
+  $("q").value = "";
+  $("suggest").innerHTML = "";
+  load(q);
+});
+$("err").addEventListener("close", () => $("q").focus());
+
+function showError(msg) {
+  $("err-msg").textContent = msg;
+  if (!$("err").open) $("err").showModal();
+}
 $("up").addEventListener("change", () => current && load(current));
 $("down").addEventListener("change", () => current && load(current));
 
@@ -152,10 +177,13 @@ let current = null;
 async function load(code) {
   code = code.trim().toUpperCase();
   if (!code) return;
-  $("q").value = code;
   const url = `/api/map?course=${encodeURIComponent(code)}&up=${$("up").value}&down=${$("down").value}`;
   const res = await fetch(url);
   const data = await res.json();
+  if (data.not_found) {
+    showError(data.error);
+    return;
+  }
   if (data.error && !data.nodes) {
     $("status").textContent = data.error;
     if (res.status === 503) setTimeout(() => load(code), 4000);

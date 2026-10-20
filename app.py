@@ -28,9 +28,11 @@ def search():
 
 @app.get("/api/map")
 def course_map():
-    code = BulletinIndex.normalize(request.args.get("course", ""))
+    raw = request.args.get("course", "").strip()
+    code = BulletinIndex.normalize(raw)
     if not code:
-        return jsonify({"error": "Type a course like OMIS 107."}), 400
+        return jsonify({"error": f"“{raw}” isn't a course code. Type a course like OMIS 107.",
+                        "not_found": True}), 400
     if index.status["state"] != "ready":
         return jsonify({"error": "The bulletin is still being read.",
                         "status": index.status}), 503
@@ -38,7 +40,9 @@ def course_map():
     down = min(max(int(request.args.get("down", 1)), 1), 4)
     data = index.map_for(code, up_depth=up, down_depth=down)
     if not data["found"] and not data["unlocks"]:
-        data["error"] = f"{code} isn't in the {index.status['source']} course listings."
+        return jsonify({"error": f"{code} isn't in the SCU Undergraduate Bulletin. "
+                                 "Check the subject and number and try again.",
+                        "not_found": True}), 404
     return jsonify(data)
 
 
