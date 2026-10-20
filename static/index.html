@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCU Prerequisite Map</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f6f3; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b665e;
+    --line: #d9d5cc; --edge: #8f897e;
+    --accent: #a6192e; --accent-soft: #f6e3e6;
+    --pre: #ffffff; --pre-border: #c9c3b6;
+    --unlock: #e6f2ee; --unlock-border: #3d8a72; --unlock-edge: #3d8a72;
+    --missing: #f1efea; --junction: #efe9dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17161a; --panel: #211f24; --ink: #ece9e3; --muted: #a29d94;
+      --line: #3a3740; --edge: #8a857c;
+      --accent: #e35d70; --accent-soft: #3d1f26;
+      --pre: #26242a; --pre-border: #4a4650;
+      --unlock: #1b2e28; --unlock-border: #5fb497; --unlock-edge: #5fb497;
+      --missing: #1d1c20; --junction: #2e2a22;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { padding: 18px 24px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 18px; margin: 0 0 10px; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input[type=text] { font: inherit; padding: 8px 12px; width: 220px; border: 1px solid var(--line);
+         border-radius: 8px; background: var(--bg); color: var(--ink); text-transform: uppercase; }
+  input[type=text]::placeholder { text-transform: none; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent);
+           background: var(--accent); color: #fff; cursor: pointer; }
+  label { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  select { font: inherit; font-size: 13px; padding: 4px 6px; border-radius: 6px;
+           border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  #status { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 1.2em; overflow-wrap: anywhere; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: calc(100vh - 112px); }
+  #canvas { position: relative; overflow: hidden; cursor: grab; }
+  #canvas.dragging { cursor: grabbing; }
+  #canvas svg { width: 100%; height: 100%; display: block; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); padding: 18px 20px; overflow: auto; }
+  aside h2 { font-size: 20px; margin: 0; }
+  aside .title { margin: 2px 0 12px; color: var(--muted); }
+  aside h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+             margin: 18px 0 6px; }
+  aside p { margin: 0 0 8px; }
+  aside ul { margin: 0; padding-left: 18px; }
+  aside a { color: var(--accent); }
+  .chip { display: inline-block; padding: 2px 8px; margin: 2px 4px 2px 0; border-radius: 999px;
+          background: var(--unlock); border: 1px solid var(--unlock-border); font-size: 13px; cursor: pointer; }
+  .chip.opt { border-style: dashed; }
+  .legend { display: grid; grid-template-columns: 22px 1fr; gap: 6px 8px; font-size: 13px; color: var(--muted); align-items: center; }
+  .sw { width: 20px; height: 12px; border-radius: 3px; border: 1.5px solid; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; position: absolute; inset: 0;
+           display: flex; align-items: center; justify-content: center; }
+  .node rect { stroke-width: 1.5; }
+  .node { cursor: pointer; }
+  .node text { fill: var(--ink); font-size: 12px; }
+  .node text.code { font-weight: 650; font-size: 13px; }
+  .node:hover rect { stroke-width: 2.5; }
+  .junction text { font-size: 10.5px; fill: var(--muted); font-weight: 600; letter-spacing: .05em; }
+  .band { font-size: 11px; fill: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+  .zoom { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 6px; }
+  .zoom button { background: var(--panel); color: var(--ink); border-color: var(--line); padding: 4px 10px; }
+  @media (max-width: 800px) {
+    main { grid-template-columns: minmax(0, 1fr); height: auto; }
+    input[type=text] { width: 100%; flex: 1 1 160px; }
+    #canvas { height: 70vh; }
+    aside { border-left: 0; border-top: 1px solid var(--line); }
+    header { padding: 14px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>SCU Prerequisite Map <span>· from the Undergraduate Bulletin</span></h1>
+  <form id="f">
+    <input id="q" type="text" list="suggest" placeholder="Course, e.g. OMIS 107" autocomplete="off" autofocus>
+    <datalist id="suggest"></datalist>
+    <button type="submit">Map it</button>
+    <label>Prerequisites
+      <select id="up"><option value="1">direct only</option><option value="6" selected>full chain</option></select>
+    </label>
+    <label>Unlocks
+      <select id="down"><option value="1" selected>direct</option><option value="2">2 levels</option><option value="3">3 levels</option></select>
+    </label>
+  </form>
+  <div id="status"></div>
+</header>
+<main>
+  <div id="canvas">
+    <div class="empty" id="empty">Type a course code above to see what comes before it and what it unlocks.</div>
+    <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="zoom"><button type="button" id="zin">+</button><button type="button" id="zout">−</button><button type="button" id="zfit">Fit</button></div>
+  </div>
+  <aside id="side">
+    <h3>How to read it</h3>
+    <div class="legend">
+      <div class="sw" style="background:var(--accent-soft);border-color:var(--accent)"></div><div>The course you searched</div>
+      <div class="sw" style="background:var(--pre);border-color:var(--pre-border)"></div><div>Take before (prerequisite)</div>
+      <div class="sw" style="background:var(--unlock);border-color:var(--unlock-border)"></div><div>Unlocked by it</div>
+      <div class="sw" style="background:var(--missing);border-color:var(--pre-border);border-style:dashed"></div><div>Not described in the bulletin</div>
+      <div class="sw" style="background:var(--junction);border-color:var(--edge);border-radius:8px"></div><div>“ONE OF” — any one path is enough</div>
+    </div>
+    <p style="margin-top:14px;color:var(--muted);font-size:13px">Arrows point down, from what you take first to what it leads to.
+      A dashed line with no arrow means the two are taken together (corequisite). A dashed green arrow means the
+      course is one of several ways to qualify. Click any box to map that course.</p>
+  </aside>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const svg = $("svg");
+const NS = "http://www.w3.org/2000/svg";
+let view = null, bounds = null;
+
+// ---------- status / search -------------------------------------------------
+async function pollStatus() {
+  const s = await (await fetch("/api/status")).json();
+  if (s.state === "ready") {
+    $("status").textContent = `${s.courses} courses read from the SCU Undergraduate Bulletin (${s.source}), indexed ${s.built_at}.`;
+    return true;
+  }
+  if (s.state === "error") {
+    $("status").textContent = "Could not read the bulletin: " + s.error;
+    return true;
+  }
+  $("status").textContent = `Reading the bulletin politely, one page every few seconds… ${s.done}/${s.total || "?"} pages`;
+  setTimeout(pollStatus, 3000);
+  return false;
+}
+
+let searchTimer;
+$("q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const hits = await (await fetch("/api/search?q=" + encodeURIComponent($("q").value))).json();
+    $("suggest").innerHTML = hits.map(h => `<option value="${h.code}">${esc(h.title)}</option>`).join("");
+  }, 150);
+});
+
+$("f").addEventListener("submit", (e) => { e.preventDefault(); load($("q").value); });
+$("up").addEventListener("change", () => current && load(current));
+$("down").addEventListener("change", () => current && load(current));
+
+let current = null;
+async function load(code) {
+  code = code.trim().toUpperCase();
+  if (!code) return;
+  $("q").value = code;
+  const url = `/api/map?course=${encodeURIComponent(code)}&up=${$("up").value}&down=${$("down").value}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (data.error && !data.nodes) {
+    $("status").textContent = data.error;
+    if (res.status === 503) setTimeout(() => load(code), 4000);
+    return;
+  }
+  current = data.target;
+  history.replaceState(null, "", "?course=" + encodeURIComponent(current));
+  if (data.error) $("status").textContent = data.error;
+  else pollStatus();
+  draw(data);
+  side(data);
+}
+
+// ---------- graph building --------------------------------------------------
+function buildGraph(data) {
+  const g = new dagre.graphlib.Graph({ multigraph: true });
+  g.setGraph({ rankdir: "TB", nodesep: 26, ranksep: 54, marginx: 30, marginy: 40 });
+  g.setDefaultEdgeLabel(() => ({}));
+  // Courses in the prerequisite chain are "pre"; ones reached only by
+  // following unlocks downward are "unlock".
+  const role = { [data.target]: "target" };
+  const preSet = new Set(Object.keys(data.prereq_of));
+  for (const [code, info] of Object.entries(data.prereq_of))
+    for (const c of codes(info.prereq).concat(codes(info.coreq))) preSet.add(c);
+  for (const code of Object.keys(data.nodes)) {
+    if (code === data.target) continue;
+    role[code] = preSet.has(code) ? "pre" : "unlock";
+  }
+
+  const addCourse = (code) => {
+    if (g.hasNode(code)) return;
+    const n = data.nodes[code] || { code, known: false };
+    g.setNode(code, { kind: "course", code, info: n, role: role[code] || "pre", width: 168, height: 50 });
+  };
+  let jid = 0;
+  const coreqPairs = new Set();
+  const junction = (label) => {
+    const id = "j" + (jid++);
+    g.setNode(id, { kind: "junction", label, width: label.length * 7 + 22, height: 22 });
+    return id;
+  };
+  // Attach a requirement tree so that it feeds into node `into`.
+  const attach = (tree, into, style, insideOr) => {
+    if (!tree) return;
+    if (tree.op === "course") {
+      addCourse(tree.code);
+      if (style === "coreq") {
+        // lectures and labs usually name each other; draw one line per pair
+        const pair = [tree.code, into].sort().join("~");
+        if (coreqPairs.has(pair)) return;
+        coreqPairs.add(pair);
+      }
+      g.setEdge(tree.code, into, { style }, tree.code + ">" + into + ":" + style);
+    } else if (tree.op === "and" && !insideOr) {
+      tree.args.forEach(a => attach(a, into, style, false));
+    } else {
+      const j = junction(tree.op === "or" ? "ONE OF" : "ALL OF");
+      tree.args.forEach(a => attach(a, j, style, tree.op === "or"));
+      g.setEdge(j, into, { style }, j + ">" + into);
+    }
+  };
+
+  addCourse(data.target);
+  for (const [code, info] of Object.entries(data.prereq_of)) {
+    addCourse(code);
+    attach(info.prereq, code, "pre", false);
+    attach(info.coreq, code, "coreq", false);
+  }
+  dagre.layout(g);
+
+  // Unlocked courses can number in the dozens, which would make one very
+  // wide dagre rank. Lay them out instead as wrapped rows under the target,
+  // one band per level.
+  const W = 168, H = 50, GAP_X = 18, GAP_Y = 22, COLS = 6;
+  const level = { [data.target]: 0 };
+  const bands = [];
+  for (const u of data.unlocks) {  // server lists unlocks breadth-first
+    if (g.hasNode(u.to) || u.to in level) continue;
+    const lv = (level[u.from] ?? 0) + 1;
+    level[u.to] = lv;
+    (bands[lv] ||= []).push(u.to);
+  }
+  const t = g.node(data.target);
+  let y = Math.max(...g.nodes().map(id => g.node(id).y + g.node(id).height / 2)) + 70;
+  for (const band of bands.filter(Boolean)) {
+    band.sort();
+    for (let i = 0; i < band.length; i += COLS) {
+      const row = band.slice(i, i + COLS);
+      const rowW = row.length * W + (row.length - 1) * GAP_X;
+      row.forEach((code, j) => {
+        g.setNode(code, { kind: "course", code, info: data.nodes[code] || { code, known: false },
+                          role: "unlock", width: W, height: H,
+                          x: t.x - rowW / 2 + W / 2 + j * (W + GAP_X), y: y + H / 2 });
+      });
+      y += H + GAP_Y;
+    }
+    y += 50;
+  }
+  const unlockEdges = [];
+  const seen = new Set();
+  for (const u of data.unlocks) {
+    const key = u.from + ">" + u.to;
+    if (seen.has(key) || !g.hasNode(u.from) || !g.hasNode(u.to)) continue;
+    seen.add(key);
+    unlockEdges.push({ from: u.from, to: u.to, style: u.kind === "coreq" || !u.sole ? "unlock-opt" : "unlock" });
+  }
+  return { g, unlockEdges };
+}
+
+function codes(tree) {
+  if (!tree) return [];
+  if (tree.op === "course") return [tree.code];
+  return tree.args.flatMap(codes);
+}
+
+// ---------- drawing ---------------------------------------------------------
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function draw(data) {
+  $("empty").style.display = "none";
+  svg.innerHTML = "";
+  const { g, unlockEdges } = buildGraph(data);
+  const css = getComputedStyle(document.documentElement);
+  const color = (v) => css.getPropertyValue(v).trim();
+
+  const defs = el("defs", {}, svg);
+  for (const [id, c] of [["arrow", color("--edge")], ["arrow-u", color("--unlock-edge")]]) {
+    const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", fill: c }, m);
+  }
+  const root = el("g", {}, svg);
+
+  for (const e of g.edges()) {
+    const ed = g.edge(e);
+    const pts = ed.points;
+    let d = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+      d += ` Q${pts[i].x},${pts[i].y} ${i === pts.length - 2 ? pts[i + 1].x : mx},${i === pts.length - 2 ? pts[i + 1].y : my}`;
+    }
+    if (pts.length === 2) d += ` L${pts[1].x},${pts[1].y}`;
+    const unlock = ed.style.startsWith("unlock");
+    el("path", {
+      d, fill: "none",
+      stroke: unlock ? color("--unlock-edge") : color("--edge"),
+      "stroke-width": 1.6,
+      "stroke-dasharray": (ed.style === "coreq" || ed.style === "unlock-opt") ? "5 4" : "none",
+      "marker-end": ed.style === "coreq" ? "none" : `url(#${unlock ? "arrow-u" : "arrow"})`,
+    }, root);
+  }
+  for (const e of unlockEdges) {
+    const a = g.node(e.from), b = g.node(e.to);
+    const x0 = a.x, y0 = a.y + a.height / 2, x1 = b.x, y1 = b.y - b.height / 2;
+    const bend = Math.min(60, (y1 - y0) / 2);
+    el("path", {
+      d: `M${x0},${y0} C${x0},${y0 + bend} ${x1},${y1 - bend} ${x1},${y1}`,
+      fill: "none", stroke: color("--unlock-edge"), "stroke-width": 1.4, opacity: 0.75,
+      "stroke-dasharray": e.style === "unlock-opt" ? "5 4" : "none",
+      "marker-end": "url(#arrow-u)",
+    }, root);
+  }
+
+  for (const id of g.nodes()) {
+    const n = g.node(id);
+    if (n.kind === "junction") {
+      const grp = el("g", { class: "junction", transform: `translate(${n.x},${n.y})` }, root);
+      el("rect", { x: -n.width / 2, y: -n.height / 2, width: n.width, height: n.height, rx: 11,
+                   fill: color("--junction"), stroke: color("--edge") }, grp);
+      const t = el("text", { "text-anchor": "middle", dy: "0.35em" }, grp);
+      t.textContent = n.label;
+      continue;
+    }
+    const info = n.info;
+    const fill = n.role === "target" ? color("--accent-soft") : n.role === "unlock" ? color("--unlock") : info.known ? color("--pre") : color("--missing");
+    const stroke = n.role === "target" ? color("--accent") : n.role === "unlock" ? color("--unlock-border") : color("--pre-border");
+    const grp = el("g", { class: "node", transform: `translate(${n.x},${n.y})`, tabindex: 0, role: "button" }, root);
+    el("rect", { x: -n.width / 2, y: -n.height / 2, width: n.width, height: n.height, rx: 8,
+                 fill, stroke, "stroke-width": n.role === "target" ? 2.5 : 1.5,
+                 "stroke-dasharray": info.known ? "none" : "4 3" }, grp);
+    const t1 = el("text", { class: "code", "text-anchor": "middle", y: info.known ? -4 : 4 }, grp);
+    t1.textContent = id;
+    if (info.known) {
+      const t2 = el("text", { "text-anchor": "middle", y: 13 }, grp);
+      t2.textContent = clip(info.title, 25);
+    }
+    const tip = el("title", {}, grp);
+    tip.textContent = info.known ? `${id} — ${info.title}${info.prereq_text ? "\nPrerequisite: " + info.prereq_text : ""}` : `${id} (no description found in the bulletin)`;
+    grp.addEventListener("click", () => load(id));
+    grp.addEventListener("keydown", (ev) => { if (ev.key === "Enter") load(id); });
+  }
+
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const id of g.nodes()) {
+    const n = g.node(id);
+    x0 = Math.min(x0, n.x - n.width / 2); x1 = Math.max(x1, n.x + n.width / 2);
+    y0 = Math.min(y0, n.y - n.height / 2); y1 = Math.max(y1, n.y + n.height / 2);
+  }
+  const pad = 30;
+  bounds = { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
+  fit();
+}
+
+// ---------- pan & zoom ------------------------------------------------------
+function setView(v) { view = v; svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); }
+function fit() {
+  if (!bounds) return;
+  const r = svg.getBoundingClientRect();
+  const scale = Math.max(bounds.w / r.width, bounds.h / r.height, 0.8);
+  const w = r.width * scale, h = r.height * scale;
+  setView({ x: bounds.x - (w - bounds.w) / 2, y: bounds.y - (h - bounds.h) / 2, w, h });
+}
+function zoom(f, cx, cy) {
+  if (!view) return;
+  const r = svg.getBoundingClientRect();
+  cx ??= r.width / 2; cy ??= r.height / 2;
+  const px = view.x + view.w * (cx / r.width), py = view.y + view.h * (cy / r.height);
+  const w = view.w * f, h = view.h * f;
+  setView({ x: px - (px - view.x) * f, y: py - (py - view.y) * f, w, h });
+}
+$("zin").onclick = () => zoom(0.8); $("zout").onclick = () => zoom(1.25); $("zfit").onclick = fit;
+svg.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const r = svg.getBoundingClientRect();
+  zoom(e.deltaY > 0 ? 1.1 : 0.9, e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+let drag = null;
+svg.addEventListener("pointerdown", (e) => {
+  if (!view || e.target.closest(".node")) return;
+  drag = { x: e.clientX, y: e.clientY, v: { ...view } };
+  $("canvas").classList.add("dragging");
+});
+window.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const r = svg.getBoundingClientRect();
+  const s = drag.v.w / r.width;
+  setView({ ...drag.v, x: drag.v.x - (e.clientX - drag.x) * s, y: drag.v.y - (e.clientY - drag.y) * s });
+});
+window.addEventListener("pointerup", () => { drag = null; $("canvas").classList.remove("dragging"); });
+window.addEventListener("resize", fit);
+
+// ---------- side panel ------------------------------------------------------
+function side(data) {
+  const n = data.nodes[data.target] || {};
+  const unlocks = data.unlocks.filter(u => u.from === data.target);
+  let h = `<h2>${esc(data.target)}</h2>`;
+  if (n.known) {
+    h += `<div class="title">${esc(n.title)}${n.units ? ` · ${esc(n.units)} units` : ""}</div>`;
+    h += `<h3>Prerequisites (bulletin wording)</h3><p>${n.prereq_text ? esc(n.prereq_text) : "None listed."}</p>`;
+    if (n.coreq_text) h += `<h3>Corequisites</h3><p>${esc(n.coreq_text)}</p>`;
+    if (n.prereq_notes && n.prereq_notes.length) h += `<h3>Other conditions</h3><ul>${n.prereq_notes.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  } else {
+    h += `<div class="title">No course description for this code in the bulletin.</div>`;
+  }
+  h += `<h3>Unlocks (${unlocks.length})</h3>`;
+  h += unlocks.length
+    ? unlocks.map(u => `<span class="chip${u.sole ? "" : " opt"}" data-c="${esc(u.to)}" title="${esc((data.nodes[u.to] || {}).title || "")}">${esc(u.to)}</span>`).join("") +
+      (unlocks.some(u => !u.sole) ? `<p style="font-size:13px;color:var(--muted);margin-top:6px">Dashed: this course is one of several ways to meet the requirement.</p>` : "")
+    : "<p>No course in the bulletin lists it as a prerequisite.</p>";
+  if (n.url) h += `<h3>Source</h3><p><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.department || "Bulletin page")}</a></p>`;
+  h += `<p style="font-size:12px;color:var(--muted);margin-top:16px">Prerequisites are read automatically from the bulletin text. Check the wording above and talk to your advisor before you register.</p>`;
+  $("side").innerHTML = h;
+  $("side").querySelectorAll(".chip").forEach(c => c.onclick = () => load(c.dataset.c));
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function clip(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+
+pollStatus().then(() => {
+  const c = new URLSearchParams(location.search).get("course");
+  if (c) load(c);
+});
+</script>
+</body>
+</html>
