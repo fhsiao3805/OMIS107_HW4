@@ -30,6 +30,11 @@
   header { padding: 18px 24px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
   h1 { font-size: 18px; margin: 0 0 10px; letter-spacing: .2px; }
   h1 span { color: var(--muted); font-weight: 400; }
+  .topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 10px; }
+  .topbar h1 { margin: 0; }
+  .back { font-size: 13px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px;
+          background: var(--bg); color: var(--ink); text-decoration: none; white-space: nowrap; }
+  .back:hover { border-color: var(--accent); color: var(--accent); }
   form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   input[type=text] { font: inherit; padding: 8px 12px; width: 220px; border: 1px solid var(--line);
          border-radius: 8px; background: var(--bg); color: var(--ink); text-transform: uppercase; }
@@ -85,7 +90,10 @@
 </head>
 <body>
 <header>
-  <h1>SCU Prerequisite Map <span>· from the Undergraduate Bulletin</span></h1>
+  <div class="topbar">
+    <a class="back" href="/">← Back to home</a>
+    <h1>SCU Prerequisite Map <span>· from the Undergraduate Bulletin</span></h1>
+  </div>
   <form id="f">
     <input id="q" type="text" list="suggest" placeholder="Course, e.g. OMIS 107" autocomplete="off" autofocus>
     <datalist id="suggest"></datalist>
