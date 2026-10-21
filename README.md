@@ -9,13 +9,28 @@ The data comes from the course descriptions and major requirements in the public
 
 ## Run it
 
+You need Python 3.9 or newer.
+
+**macOS (Terminal):**
+
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python app.py
 ```
 
-Then open <http://127.0.0.1:8001>.
+**Windows (Command Prompt or PowerShell):**
+
+```bat
+py -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python app.py
+```
+
+If `py` isn't found, install Python from <https://www.python.org/downloads/> and
+tick "Add python.exe to PATH" during setup.
+
+Then open <http://127.0.0.1:8001>. Press `Ctrl+C` in the terminal to stop the server.
 
 The first time it starts, the server reads the bulletin's department pages in the
 background. That takes about 8 minutes, and the page shows its progress. The
@@ -120,8 +135,16 @@ Limits:
 
 ## Tests
 
+macOS:
+
 ```sh
 .venv/bin/python -m unittest test_prereqs test_majors
+```
+
+Windows:
+
+```bat
+.venv\Scripts\python -m unittest test_prereqs test_majors
 ```
 
 ## Files
