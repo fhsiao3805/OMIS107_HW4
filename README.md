@@ -1,7 +1,9 @@
 # OMIS107_HW4 — SCU Prerequisite Map
 
-Type a course (for example `OMIS 107`) and the page draws a top-down diagram:
-the courses you must take before it are above, and the courses it unlocks are below.
+The home page asks for a course (for example `OMIS 107`). If the course isn't in
+the bulletin, a "Course not found" message appears. Otherwise the map page draws a
+top-down diagram: the courses you must take before it are above, and the courses
+it unlocks are below. **← Back to home** returns to the home page.
 
 The data comes from the course descriptions in the public
 [SCU Undergraduate Bulletin](https://www.scu.edu/bulletin/undergraduate/).
@@ -55,8 +57,9 @@ those numbers elsewhere.
 
 ## Files
 
-- `app.py`: Flask server and JSON API (`/api/map`, `/api/search`, `/api/status`)
+- `app.py`: Flask server: pages (`/`, `/map?course=…`) and JSON API (`/api/map`, `/api/search`, `/api/status`)
 - `bulletin.py`: finds department pages, parses courses, builds the index
 - `prereqs.py`: prerequisite sentence parser
 - `fetcher.py`: rate-limited, robots-aware, cached HTTP client
+- `static/home.html`: the home page with the course box
 - `static/index.html`: the diagram page (layout by [dagre](https://github.com/dagrejs/dagre))

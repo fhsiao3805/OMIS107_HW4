@@ -3,7 +3,7 @@
 Run:  .venv/bin/python app.py   then open http://127.0.0.1:8000
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory, url_for
 
 from bulletin import BulletinIndex
 
@@ -13,6 +13,13 @@ index = BulletinIndex()
 
 @app.get("/")
 def home():
+    return send_from_directory(app.static_folder, "home.html")
+
+
+@app.get("/map")
+def map_page():
+    if not request.args.get("course", "").strip():
+        return redirect(url_for("home"))
     return send_from_directory(app.static_folder, "index.html")
 
 
