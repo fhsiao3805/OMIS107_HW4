@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SCU Prerequisite Map</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --panel: #ffffff; --ink: #1f1d1a; --muted: #6b665e;
+    --line: #d9d5cc; --accent: #a6192e; --accent-soft: #f6e3e6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17161a; --panel: #211f24; --ink: #ece9e3; --muted: #a29d94;
+      --line: #3a3740; --accent: #e35d70; --accent-soft: #3d1f26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         padding: 24px 16px; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .card { width: min(520px, 100%); background: var(--panel); border: 1px solid var(--line);
+          border-top: 4px solid var(--accent); border-radius: 12px; padding: 28px 28px 22px; }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: .2px; }
+  .lede { margin: 0 0 22px; color: var(--muted); }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  #f { display: flex; gap: 8px; }
+  input[type=text] { font: inherit; flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
+         border-radius: 8px; background: var(--bg); color: var(--ink); text-transform: uppercase; }
+  input[type=text]::placeholder { text-transform: none; }
+  button { font: inherit; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--accent);
+           background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  #status { font-size: 13px; color: var(--muted); margin-top: 18px; padding-top: 14px;
+            border-top: 1px solid var(--line); min-height: 1.2em; overflow-wrap: anywhere; }
+  dialog { border: 1px solid var(--line); border-top: 4px solid var(--accent); border-radius: 10px;
+           background: var(--panel); color: var(--ink); padding: 20px 22px; width: min(380px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .35); }
+  dialog h2 { font-size: 17px; margin: 0 0 8px; }
+  dialog p { margin: 0 0 16px; color: var(--muted); }
+  dialog form { display: flex; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>SCU Prerequisite Map</h1>
+  <p class="lede">See which courses you need before a class, and what that class leads to.
+    Course data comes from the SCU Undergraduate Bulletin.</p>
+  <form id="f">
+    <label for="q" style="position:absolute;left:-9999px">Course code</label>
+    <input id="q" type="text" list="suggest" placeholder="Course, e.g. OMIS 107" autocomplete="off" autofocus>
+    <datalist id="suggest"></datalist>
+    <button type="submit" id="go">Find prerequisites</button>
+  </form>
+  <p class="hint">Type a subject and number, such as CSCI 61 or ECON 1. Suggestions appear as you type.</p>
+  <div id="status"></div>
+</main>
+<dialog id="err" aria-labelledby="err-title">
+  <h2 id="err-title">Course not found</h2>
+  <p id="err-msg"></p>
+  <form method="dialog"><button autofocus>OK</button></form>
+</dialog>
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function pollStatus() {
+  const s = await (await fetch("/api/status")).json();
+  if (s.state === "ready") {
+    $("status").textContent = `${s.courses} courses read from the SCU Undergraduate Bulletin (${s.source}), indexed ${s.built_at}.`;
+    return;
+  }
+  if (s.state === "error") {
+    $("status").textContent = "Could not read the bulletin: " + s.error;
+    return;
+  }
+  $("status").textContent = `Reading the bulletin politely, one page every few seconds… ${s.done}/${s.total || "?"} pages`;
+  setTimeout(pollStatus, 3000);
+}
+
+let searchTimer;
+$("q").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const hits = await (await fetch("/api/search?q=" + encodeURIComponent($("q").value))).json();
+    $("suggest").innerHTML = hits.map(h => `<option value="${h.code}">${esc(h.title)}</option>`).join("");
+  }, 150);
+});
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("q").value.trim().toUpperCase();
+  if (!code) return;
+  clearTimeout(searchTimer);
+  $("go").disabled = true;
+  try {
+    // Check the course exists before leaving the home page.
+    const res = await fetch(`/api/map?course=${encodeURIComponent(code)}&up=1&down=1`);
+    const data = await res.json();
+    if (data.not_found) {
+      $("q").value = "";
+      $("suggest").innerHTML = "";
+      showError(data.error);
+    } else if (res.status === 503) {
+      $("status").textContent = "The bulletin is still being read. Try again when it finishes.";
+      pollStatus();
+    } else if (data.error && !data.nodes) {
+      $("status").textContent = data.error;
+    } else {
+      location.href = "/map?course=" + encodeURIComponent(data.target);
+    }
+  } finally {
+    $("go").disabled = false;
+  }
+});
+$("err").addEventListener("close", () => $("q").focus());
+
+function showError(msg) {
+  $("err-msg").textContent = msg;
+  if (!$("err").open) $("err").showModal();
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+pollStatus();
+</script>
+</body>
+</html>
