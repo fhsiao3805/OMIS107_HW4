@@ -24,6 +24,20 @@ CROSSLIST_RE = re.compile(
     r"(also listed as|cross-?listed (?:with|as)|same as|formerly|equivalent to|"
     r"may not (?:take|receive credit)|credit for|in place of)[^.]*", re.I)
 INDEX_PATH = Path(__file__).parent / "cache" / "index.json"
+INDEX_VERSION = 2  # 2: adds majors
+
+# "Requirements for the Majors", "Requirements for the Major in Civil Engineering",
+# "Major in Electrical Engineering"
+MAJOR_SECTION_RE = re.compile(r"^(?:requirements for the majors?|major)(?:\s+in\s+(.+?))?\s*$", re.I)
+# A paragraph that starts one major inside a section: "Major in Studio Art",
+# "Bachelor of Science in Biochemistry, ACS Certified"
+MAJOR_MARKER_RE = re.compile(r"^(?:major in|bachelor of (?:science|arts) in)\s+(.+?)\s*:?\s*$", re.I)
+MINOR_RE = re.compile(r"^(?:requirements for the )?minors?\b", re.I)
+# "OMIS 105, 106, and 107", "CSEN 101–180", "ARTS 74 or 174, 75 or 175, and 177"
+CODE_LIST_RE = re.compile(
+    r"\b([A-Z]{2,5})\s?(\d{1,3}[A-Z]{0,2})\b"
+    r"((?:(?:\s*(?:,|and|or|/|\+|&|–|-|to|through))+\s*\d{1,3}[A-Z]{0,2}\b)*)")
+LIST_TAIL_RE = re.compile(r"((?:\s*(?:,|and|or|/|\+|&|–|-|to|through))+)\s*(\d{1,3}[A-Z]{0,2})\b")
 
 # Topics the automatic guess gets wrong, checked by hand against the bulletin.
 # Keyed by (page slug, topic) where topic is the part of the section title
@@ -192,6 +206,102 @@ def parse_department(html, url):
     return courses
 
 
+def major_refs(text):
+    """Course codes and number ranges named in one line of major requirements.
+
+    Returns (codes, ranges) where ranges are (subject, low, high) for wording
+    like "CSEN 101–180". Codes are not checked against the index here.
+    """
+    codes, ranges = [], []
+    # "ECEN 21 (or CSEN 21), 50, 153": the 50 and 153 belong to ECEN, so read
+    # parentheticals on their own and take them out of the main sentence.
+    parts = re.findall(r"\(([^()]*)\)", text) + [re.sub(r"\([^()]*\)", " ", text)]
+    for part in parts:
+        for m in CODE_LIST_RE.finditer(part):
+            subj = m.group(1)
+            if subj in NOT_SUBJECTS:
+                continue
+            prev = m.group(2)
+            codes.append(f"{subj} {prev}")
+            for sep, num in LIST_TAIL_RE.findall(m.group(3)):
+                if re.search(r"–|-|\bto\b|through", sep) and prev.isdigit() and num.isdigit():
+                    ranges.append((subj, int(prev), int(num)))
+                else:
+                    codes.append(f"{subj} {num}")
+                prev = num
+    return codes, ranges
+
+
+def parse_majors(html, url):
+    """Majors described on a department page and the courses each one names."""
+    soup = BeautifulSoup(html, "html.parser")
+    for br in soup.find_all("br"):
+        br.replace_with(" ")
+    main = soup.find("h1")
+    if not main:
+        return []
+    dept = _text(main)
+    dept_name = re.sub(r"^(the\s+)?department of\s+|\s+(department|program)$", "",
+                       dept.strip(), flags=re.I)
+
+    majors = {}            # name -> {"codes": [], "ranges": []}
+    in_section = False
+    current = None         # major name, or None for text shared by the section
+    shared = ([], [])      # codes/ranges before the first named major
+    section_majors = []
+
+    def close_section():
+        # Text before the first "Major in …" applies to every major in the section;
+        # a section with no named majors is the department's one major.
+        if not in_section:
+            return
+        names = section_majors or ([dept_name] if shared[0] or shared[1] else [])
+        for n in names:
+            m = majors.setdefault(n, {"codes": [], "ranges": []})
+            m["codes"] += shared[0]
+            m["ranges"] += shared[1]
+
+    for el in main.parent.find_all(["h1", "h2", "h3", "h4", "p", "li", "td"]):
+        if el.name == "p" and el.find_parent(["li", "td"]) is not None:
+            continue
+        txt = _text(el)
+        if el.name in ("h1", "h2"):
+            close_section()
+            m = MAJOR_SECTION_RE.match(txt)
+            in_section = bool(m) and el.name == "h2"
+            current = m.group(1) if in_section and m.group(1) else None
+            shared, section_majors = ([], []), []
+            if current:
+                section_majors.append(current)
+            continue
+        if not in_section or not txt:
+            continue
+        if MINOR_RE.match(txt) and el.name != "li":
+            close_section()
+            in_section = False
+            continue
+        marker = MAJOR_MARKER_RE.match(txt) if el.name != "li" and len(txt) < 90 else None
+        if marker:
+            current = re.sub(r"\s*\([A-Z]{2,5}\)$", "", marker.group(1))
+            if current not in section_majors:
+                section_majors.append(current)
+            continue
+        codes, ranges = major_refs(CROSSLIST_RE.sub(" ", txt))
+        if current is None:
+            shared[0].extend(codes)
+            shared[1].extend(ranges)
+        else:
+            m = majors.setdefault(current, {"codes": [], "ranges": []})
+            m["codes"] += codes
+            m["ranges"] += ranges
+    close_section()
+    school = re.search(r"/chapter-\d+-([^/]+)/", url)
+    school = re.sub(r"\b(Of|And)\b", lambda w: w.group().lower(),
+                    school.group(1).replace("-", " ").title()) if school else ""
+    return [{"name": n, "school": school, "department": dept, "url": url, **refs}
+            for n, refs in majors.items()]
+
+
 class BulletinIndex:
     """Builds the course index in a background thread and answers queries."""
 
@@ -199,6 +309,7 @@ class BulletinIndex:
         self.fetcher = fetcher or PoliteFetcher()
         self.courses = {}
         self.unlocks = defaultdict(list)
+        self.majors = {}
         self.status = {"state": "idle", "done": 0, "total": 0, "error": None,
                        "built_at": None, "source": BULLETIN_URL}
         self._lock = threading.Lock()
@@ -208,7 +319,12 @@ class BulletinIndex:
     def _load_saved(self):
         if INDEX_PATH.exists():
             data = json.loads(INDEX_PATH.read_text())
+            # An index saved by an older version is missing data; build()
+            # re-reads it (from the page cache when the pages are fresh).
+            if data.get("version") != INDEX_VERSION:
+                return
             self._set_courses(data["courses"])
+            self._set_majors(data["majors"])
             self.status.update(state="ready", built_at=data["built_at"],
                                done=data["pages"], total=data["pages"])
 
@@ -225,6 +341,38 @@ class BulletinIndex:
         with self._lock:
             self.courses, self.unlocks = courses, unlocks
 
+    def _set_majors(self, major_list):
+        """Resolve each major's codes and ranges against the course index."""
+        by_number = defaultdict(list)
+        for code, c in self.courses.items():
+            n = re.match(r"\d+", c["number"])
+            by_number[c["subject"]].append((int(n.group()), code))
+        merged = {}
+        for m in major_list:
+            # Two pages can describe the same major (AIS is on both the
+            # accounting and information systems pages).
+            entry = merged.setdefault((m["name"], m["school"]), {**m, "courses": set()})
+            entry["courses"].update(c for c in m["codes"] if c in self.courses)
+            for subj, lo, hi in m["ranges"]:
+                entry["courses"].update(code for n, code in by_number[subj] if lo <= n <= hi)
+        name_count = Counter(name for name, _ in merged)
+        majors = {}
+        for (name, school), m in merged.items():
+            if not m["courses"]:  # "five upper-division courses" names none
+                continue
+            label = f"{name} ({school})" if name_count[name] > 1 else name
+            mid = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+            majors[mid] = {"id": mid, "name": label, "school": school,
+                           "department": m["department"], "url": m["url"],
+                           "courses": m["courses"]}
+        with self._lock:
+            self.majors = majors
+
+    def major_list(self):
+        return sorted(({"id": m["id"], "name": m["name"], "school": m["school"],
+                        "courses": len(m["courses"])} for m in self.majors.values()),
+                      key=lambda m: m["name"])
+
     def build(self, force=False):
         if self.status["state"] == "building":
             return
@@ -239,16 +387,19 @@ class BulletinIndex:
             links = sorted(set(DEPT_LINK_RE.findall(index_html)))
             urls = [urljoin(BULLETIN_URL, h) for h in links]
             self.status["total"] = len(urls)
-            all_courses = []
+            all_courses, all_majors = [], []
             for url in urls:
                 html = self.fetcher.get(url)
                 all_courses.extend(parse_department(html, url))
+                all_majors.extend(parse_majors(html, url))
                 self.status["done"] += 1
             self._set_courses(all_courses)
+            self._set_majors(all_majors)
             built_at = time.strftime("%Y-%m-%d %H:%M")
             INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
             INDEX_PATH.write_text(json.dumps(
-                {"built_at": built_at, "pages": len(urls), "courses": all_courses}))
+                {"version": INDEX_VERSION, "built_at": built_at, "pages": len(urls),
+                 "courses": all_courses, "majors": all_majors}))
             self.status.update(state="ready", built_at=built_at)
         except Exception as e:  # surface the failure to the UI
             self.status.update(state="error", error=str(e))
@@ -268,10 +419,37 @@ class BulletinIndex:
                 "prereq_text": c["prereq_text"], "prereq_notes": c["prereq_notes"],
                 "coreq_text": c["coreq_text"]}
 
-    def map_for(self, code, up_depth=6, down_depth=1):
-        """Graph around one course: its prerequisite chain and what it unlocks."""
+    def _only(self, tree, keep, through=None):
+        """`tree` reduced to the courses in `keep`.
+
+        A dropped course is replaced by its own (reduced) prerequisites, so a
+        major course reached through a non-major one stays connected. Pass
+        through=None to drop courses without looking past them (corequisites).
+        """
+        if tree is None:
+            return None
+        if tree["op"] == "course":
+            code = tree["code"]
+            if code in keep:
+                return tree
+            c = self.courses.get(code)
+            if through is None or code in through or not c:
+                return None
+            return self._only(c["prereq"], keep, through | {code})
+        args = [a for a in (self._only(a, keep, through) for a in tree["args"]) if a]
+        if not args:
+            return None
+        return args[0] if len(args) == 1 else {"op": tree["op"], "args": args}
+
+    def map_for(self, code, up_depth=6, down_depth=1, major=None):
+        """Graph around one course: its prerequisite chain and what it unlocks.
+
+        With `major` (an id from self.majors), only courses that major names
+        are shown.
+        """
         target = self.courses.get(code)
         nodes, prereq_of, unlocked = {}, {}, []
+        keep = self.majors[major]["courses"] | {code} if major else None
 
         # Upward: follow prerequisite trees recursively.
         frontier, seen = [(code, 0)], {code}
@@ -281,8 +459,12 @@ class BulletinIndex:
             c = self.courses.get(cur)
             if not c or depth >= up_depth:
                 continue
-            prereq_of[cur] = {"prereq": c["prereq"], "coreq": c["coreq"]}
-            for req in tree_codes(c["prereq"]) + tree_codes(c["coreq"]):
+            if keep is None:
+                pre, co = c["prereq"], c["coreq"]
+            else:
+                pre, co = self._only(c["prereq"], keep, frozenset()), self._only(c["coreq"], keep)
+            prereq_of[cur] = {"prereq": pre, "coreq": co}
+            for req in tree_codes(pre) + tree_codes(co):
                 if req not in seen:
                     seen.add(req)
                     frontier.append((req, depth + 1))
@@ -294,6 +476,8 @@ class BulletinIndex:
             if depth >= down_depth:
                 continue
             for nxt in sorted(self.unlocks.get(cur, [])):
+                if keep is not None and nxt not in keep:
+                    continue
                 tree = self.courses[nxt]["prereq"]
                 kind = "coreq" if cur in tree_codes(self.courses[nxt]["coreq"]) \
                     and cur not in tree_codes(tree) else "prereq"

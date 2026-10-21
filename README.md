@@ -5,6 +5,11 @@ the bulletin, a "Course not found" message appears. Otherwise the map page draws
 top-down diagram: the courses you must take before it are above, and the courses
 it unlocks are below. **← Back to home** returns to the home page.
 
+You can also pick your major on the home page. This is optional. With a major
+chosen, the map shows only the courses listed in that major's requirements. If the
+course you type isn't one of them, a "Not in your major" message lets you map it
+for any major instead. You can change the major on the map page too.
+
 The data comes from the course descriptions in the public
 [SCU Undergraduate Bulletin](https://www.scu.edu/bulletin/undergraduate/).
 
@@ -51,14 +56,27 @@ AND/OR logic:
 The diagram shows "ONE OF" boxes where any one path is enough. The side panel
 always shows the bulletin's exact wording, because automatic parsing can be wrong.
 
+## How majors are read
+
+`bulletin.py` reads the "Requirements for the Major(s)" section on each department
+page. Lines such as "Major in Business Analytics" or "Bachelor of Science in
+Biochemistry" start a new major. Every course code in those lists counts toward
+the major, including ranges like `CSEN 101–180`. When a major course's prerequisite
+is outside the major, the map skips that course and links to its prerequisites
+instead.
+
+Limits: majors that describe requirements only in words ("five upper-division
+courses in Spanish") are left out of the menu. School-wide requirements, such as
+the Leavey business core, aren't counted unless the major page lists them.
+
 Course headings in the bulletin show only a number ("107. Systems Programming").
 `bulletin.py` works out the subject code (OMIS, CSCI, …) from how the page refers to
 those numbers elsewhere.
 
 ## Files
 
-- `app.py`: Flask server: pages (`/`, `/map?course=…`) and JSON API (`/api/map`, `/api/search`, `/api/status`)
-- `bulletin.py`: finds department pages, parses courses, builds the index
+- `app.py`: Flask server: pages (`/`, `/map?course=…&major=…`) and JSON API (`/api/map`, `/api/majors`, `/api/search`, `/api/status`)
+- `bulletin.py`: finds department pages, parses courses and majors, builds the index
 - `prereqs.py`: prerequisite sentence parser
 - `fetcher.py`: rate-limited, robots-aware, cached HTTP client
 - `static/home.html`: the home page with the course box

@@ -79,6 +79,10 @@
   dialog h2 { font-size: 17px; margin: 0 0 8px; }
   dialog p { margin: 0 0 16px; color: var(--muted); }
   dialog form { justify-content: flex-end; }
+  button.secondary { background: var(--panel); color: var(--ink); border-color: var(--line); }
+  #major { max-width: 260px; }
+  .filter-note { font-size: 13px; padding: 8px 10px; margin: 0 0 14px; border-radius: 8px;
+                 background: var(--accent-soft); border: 1px solid var(--accent); }
   @media (max-width: 800px) {
     main { grid-template-columns: minmax(0, 1fr); height: auto; }
     input[type=text] { width: 100%; flex: 1 1 160px; }
@@ -97,6 +101,9 @@
   <form id="f">
     <input id="q" type="text" list="suggest" placeholder="Course, e.g. OMIS 107" autocomplete="off" autofocus>
     <datalist id="suggest"></datalist>
+    <label>Major
+      <select id="major"><option value="">any (every course)</option></select>
+    </label>
     <button type="submit">Map it</button>
     <label>Prerequisites
       <select id="up"><option value="1">direct only</option><option value="6" selected>full chain</option></select>
@@ -130,7 +137,10 @@
 <dialog id="err" aria-labelledby="err-title">
   <h2 id="err-title">Course not found</h2>
   <p id="err-msg"></p>
-  <form method="dialog"><button autofocus>OK</button></form>
+  <form method="dialog">
+    <button value="all" id="err-all" class="secondary" hidden>Show it for any major</button>
+    <button value="ok" autofocus>OK</button>
+  </form>
 </dialog>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -165,40 +175,79 @@ $("q").addEventListener("input", () => {
 
 $("f").addEventListener("submit", (e) => {
   e.preventDefault();
-  const q = $("q").value;
+  // An empty course box remaps the current course, e.g. after changing only the major.
+  const q = $("q").value.trim() || current || "";
   // clear the box so the next lookup starts fresh
   clearTimeout(searchTimer);
   $("q").value = "";
   $("suggest").innerHTML = "";
   load(q);
 });
-$("err").addEventListener("close", () => $("q").focus());
+let pending = null;
+$("err").addEventListener("close", () => {
+  if ($("err").returnValue === "all" && pending) {
+    $("major").value = "";
+    load(pending);
+  } else {
+    // Keep the chosen major and put the course back so either can be fixed.
+    if (pending) $("q").value = pending;
+    $("q").focus();
+    $("q").select();
+  }
+  pending = null;
+});
 
-function showError(msg) {
+function showError(title, msg, offerAll = false) {
+  $("err-title").textContent = title;
   $("err-msg").textContent = msg;
+  $("err-all").hidden = !offerAll;
   if (!$("err").open) $("err").showModal();
 }
 $("up").addEventListener("change", () => current && load(current));
 $("down").addEventListener("change", () => current && load(current));
+// Changing the major waits for "Map it", so the course can be changed with it.
+$("major").addEventListener("change", () => {
+  try { localStorage.setItem("major", $("major").value); } catch {}
+  if (current && $("major").value !== currentMajor)
+    $("status").textContent = `Type a course, or leave the box empty to map ${current}, then press Map it.`;
+});
 
-let current = null;
+async function loadMajors(selected) {
+  const majors = await (await fetch("/api/majors")).json();
+  $("major").innerHTML = `<option value="">any (every course)</option>` +
+    majors.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("");
+  // While the bulletin is still being read the list is empty; hold on to the
+  // requested major so the map is filtered once it is ready.
+  if (selected && !majors.length) $("major").add(new Option(selected, selected));
+  if ([...$("major").options].some(o => o.value === selected)) $("major").value = selected;
+}
+
+let current = null, currentMajor = "";
 async function load(code) {
   code = code.trim().toUpperCase();
   if (!code) return;
-  const url = `/api/map?course=${encodeURIComponent(code)}&up=${$("up").value}&down=${$("down").value}`;
+  const major = $("major").value;
+  const url = `/api/map?course=${encodeURIComponent(code)}&up=${$("up").value}&down=${$("down").value}&major=${encodeURIComponent(major)}`;
   const res = await fetch(url);
   const data = await res.json();
   if (data.not_found) {
-    showError(data.error);
+    showError("Course not found", data.error);
+    return;
+  }
+  if (data.not_in_major) {
+    pending = code;
+    showError("Not in your major", data.error, true);
     return;
   }
   if (data.error && !data.nodes) {
     $("status").textContent = data.error;
-    if (res.status === 503) setTimeout(() => load(code), 4000);
+    if (res.status === 503) setTimeout(async () => { await loadMajors($("major").value); load(code); }, 4000);
     return;
   }
   current = data.target;
-  history.replaceState(null, "", "?course=" + encodeURIComponent(current));
+  currentMajor = major;
+  history.replaceState(null, "", "?course=" + encodeURIComponent(current) +
+    (major ? "&major=" + encodeURIComponent(major) : ""));
   if (data.error) $("status").textContent = data.error;
   else pollStatus();
   draw(data);
@@ -441,7 +490,11 @@ window.addEventListener("resize", fit);
 function side(data) {
   const n = data.nodes[data.target] || {};
   const unlocks = data.unlocks.filter(u => u.from === data.target);
-  let h = `<h2>${esc(data.target)}</h2>`;
+  let h = data.major
+    ? `<p class="filter-note">Showing only courses listed for the <a href="${esc(data.major.url)}" target="_blank" rel="noopener">${esc(data.major.name)}</a> major.
+       A line can skip a course outside the major. The bulletin wording below is complete.</p>`
+    : "";
+  h += `<h2>${esc(data.target)}</h2>`;
   if (n.known) {
     h += `<div class="title">${esc(n.title)}${n.units ? ` · ${esc(n.units)} units` : ""}</div>`;
     h += `<h3>Prerequisites (bulletin wording)</h3><p>${n.prereq_text ? esc(n.prereq_text) : "None listed."}</p>`;
@@ -464,8 +517,10 @@ function side(data) {
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function clip(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
-pollStatus().then(() => {
-  const c = new URLSearchParams(location.search).get("course");
+pollStatus().then(async () => {
+  const params = new URLSearchParams(location.search);
+  await loadMajors(params.get("major"));
+  const c = params.get("course");
   if (c) load(c);
 });
 </script>

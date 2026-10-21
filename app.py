@@ -43,14 +43,30 @@ def course_map():
     if index.status["state"] != "ready":
         return jsonify({"error": "The bulletin is still being read.",
                         "status": index.status}), 503
-    up = min(max(int(request.args.get("up", 6)), 1), 10)
-    down = min(max(int(request.args.get("down", 1)), 1), 4)
-    data = index.map_for(code, up_depth=up, down_depth=down)
-    if not data["found"] and not data["unlocks"]:
+    major_id = request.args.get("major", "").strip() or None
+    major = index.majors.get(major_id) if major_id else None
+    if major_id and not major:
+        return jsonify({"error": "That major isn't in the list. Pick one from the menu.",
+                        "not_found": True}), 400
+    if code not in index.courses and not index.unlocks.get(code):
         return jsonify({"error": f"{code} isn't in the SCU Undergraduate Bulletin. "
                                  "Check the subject and number and try again.",
                         "not_found": True}), 404
+    if major and code not in major["courses"]:
+        return jsonify({"error": f"{code} isn't one of the courses listed in the "
+                                 f"requirements for the {major['name']} major.",
+                        "not_in_major": True}), 404
+    up = min(max(int(request.args.get("up", 6)), 1), 10)
+    down = min(max(int(request.args.get("down", 1)), 1), 4)
+    data = index.map_for(code, up_depth=up, down_depth=down, major=major_id)
+    if major:
+        data["major"] = {"id": major["id"], "name": major["name"], "url": major["url"]}
     return jsonify(data)
+
+
+@app.get("/api/majors")
+def majors():
+    return jsonify(index.major_list())
 
 
 if __name__ == "__main__":
