@@ -24,8 +24,12 @@
   h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: .2px; }
   .lede { margin: 0 0 22px; color: var(--muted); }
   label { display: block; font-weight: 600; margin-bottom: 6px; }
-  #f { display: flex; gap: 8px; }
-  input[type=text] { font: inherit; flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
+  label .opt { font-weight: 400; color: var(--muted); }
+  #f { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .field { grid-column: 1 / -1; margin-bottom: 8px; }
+  select { font: inherit; width: 100%; padding: 10px 12px; border: 1px solid var(--line);
+           border-radius: 8px; background: var(--bg); color: var(--ink); }
+  input[type=text] { font: inherit; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
          border-radius: 8px; background: var(--bg); color: var(--ink); text-transform: uppercase; }
   input[type=text]::placeholder { text-transform: none; }
   button { font: inherit; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--accent);
@@ -39,7 +43,8 @@
   dialog::backdrop { background: rgb(0 0 0 / .35); }
   dialog h2 { font-size: 17px; margin: 0 0 8px; }
   dialog p { margin: 0 0 16px; color: var(--muted); }
-  dialog form { display: flex; justify-content: flex-end; }
+  dialog form { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  button.secondary { background: var(--panel); color: var(--ink); border-color: var(--line); }
 </style>
 </head>
 <body>
@@ -48,18 +53,26 @@
   <p class="lede">See which courses you need before a class, and what that class leads to.
     Course data comes from the SCU Undergraduate Bulletin.</p>
   <form id="f">
-    <label for="q" style="position:absolute;left:-9999px">Course code</label>
+    <div class="field">
+      <label for="major">Your major <span class="opt">(optional)</span></label>
+      <select id="major"><option value="">Any major (show every course)</option></select>
+    </div>
+    <label for="q" class="field" style="margin-bottom:-2px">Course</label>
     <input id="q" type="text" list="suggest" placeholder="Course, e.g. OMIS 107" autocomplete="off" autofocus>
     <datalist id="suggest"></datalist>
     <button type="submit" id="go">Find prerequisites</button>
   </form>
-  <p class="hint">Type a subject and number, such as CSCI 61 or ECON 1. Suggestions appear as you type.</p>
+  <p class="hint">Type a subject and number, such as CSCI 61 or ECON 1. Suggestions appear as you type.
+    If you pick a major, the map shows only the courses listed in that major’s requirements.</p>
   <div id="status"></div>
 </main>
 <dialog id="err" aria-labelledby="err-title">
   <h2 id="err-title">Course not found</h2>
   <p id="err-msg"></p>
-  <form method="dialog"><button autofocus>OK</button></form>
+  <form method="dialog">
+    <button value="all" id="err-all" class="secondary" hidden>Show it for any major</button>
+    <button value="ok" autofocus>OK</button>
+  </form>
 </dialog>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -68,6 +81,7 @@ async function pollStatus() {
   const s = await (await fetch("/api/status")).json();
   if (s.state === "ready") {
     $("status").textContent = `${s.courses} courses read from the SCU Undergraduate Bulletin (${s.source}), indexed ${s.built_at}.`;
+    loadMajors();
     return;
   }
   if (s.state === "error") {
@@ -77,6 +91,18 @@ async function pollStatus() {
   $("status").textContent = `Reading the bulletin politely, one page every few seconds… ${s.done}/${s.total || "?"} pages`;
   setTimeout(pollStatus, 3000);
 }
+
+async function loadMajors() {
+  const majors = await (await fetch("/api/majors")).json();
+  let saved = null;
+  try { saved = localStorage.getItem("major"); } catch {}
+  $("major").innerHTML = `<option value="">Any major (show every course)</option>` +
+    majors.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("");
+  if (saved && majors.some(m => m.id === saved)) $("major").value = saved;
+}
+$("major").addEventListener("change", () => {
+  try { localStorage.setItem("major", $("major").value); } catch {}
+});
 
 let searchTimer;
 $("q").addEventListener("input", () => {
@@ -89,34 +115,49 @@ $("q").addEventListener("input", () => {
 
 $("f").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const code = $("q").value.trim().toUpperCase();
+  lookup($("q").value.trim().toUpperCase(), $("major").value);
+});
+
+async function lookup(code, major) {
   if (!code) return;
   clearTimeout(searchTimer);
   $("go").disabled = true;
   try {
-    // Check the course exists before leaving the home page.
-    const res = await fetch(`/api/map?course=${encodeURIComponent(code)}&up=1&down=1`);
+    // Check the course exists (and is in the major) before leaving the home page.
+    const res = await fetch(`/api/map?course=${encodeURIComponent(code)}&up=1&down=1&major=${encodeURIComponent(major)}`);
     const data = await res.json();
     if (data.not_found) {
       $("q").value = "";
       $("suggest").innerHTML = "";
-      showError(data.error);
+      showError("Course not found", data.error);
+    } else if (data.not_in_major) {
+      pending = code;
+      showError("Not in your major", data.error, true);
     } else if (res.status === 503) {
       $("status").textContent = "The bulletin is still being read. Try again when it finishes.";
       pollStatus();
     } else if (data.error && !data.nodes) {
       $("status").textContent = data.error;
     } else {
-      location.href = "/map?course=" + encodeURIComponent(data.target);
+      location.href = "/map?course=" + encodeURIComponent(data.target) +
+        (major ? "&major=" + encodeURIComponent(major) : "");
     }
   } finally {
     $("go").disabled = false;
   }
-});
-$("err").addEventListener("close", () => $("q").focus());
+}
 
-function showError(msg) {
+let pending = null;
+$("err").addEventListener("close", () => {
+  if ($("err").returnValue === "all" && pending) lookup(pending, "");
+  else $("q").focus();
+  pending = null;
+});
+
+function showError(title, msg, offerAll = false) {
+  $("err-title").textContent = title;
   $("err-msg").textContent = msg;
+  $("err-all").hidden = !offerAll;
   if (!$("err").open) $("err").showModal();
 }
 
